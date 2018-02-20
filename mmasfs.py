@@ -40,7 +40,7 @@ class MMASFS :
         self.pheromone_matrix = numpy.zeros((self.FEATURE_COUNT,self.FEATURE_COUNT), dtype=object)
         self.heuristic_matrix = numpy.zeros((self.FEATURE_COUNT,self.FEATURE_COUNT), dtype=object)
         
-        #setup solution
+        #setup solution object
         self.best_solution = { 0: [], 1: 0, 2: self.FEATURE_COUNT, 3: [], 4: [] }
 
 
@@ -69,6 +69,7 @@ class MMASFS :
     def initPheromoneMatrix(self) :    
         for row in range(self.pheromone_matrix.shape[0]): 
             for column in range(self.pheromone_matrix.shape[1]):
+                #self.pheromone_matrix[row,column] = numpy.array([[self.MIN_PHEROMONE,self.MIN_PHEROMONE],[self.MIN_PHEROMONE,self.MIN_PHEROMONE]])
                 self.pheromone_matrix[row,column] = numpy.array([[self.MIN_PHEROMONE,self.MIN_PHEROMONE],[self.MIN_PHEROMONE,self.MIN_PHEROMONE]])
 
 
@@ -268,3 +269,4 @@ class MMASFS :
 
 a = MMASFS(50, 1, .5, .049, 6, .1, .8)
 a.run()
+print('BEST SOLUTION ', a.best_solution)
