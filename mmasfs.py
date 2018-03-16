@@ -13,6 +13,9 @@ from sklearn import svm
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.metrics import classification_report
 from ast import literal_eval
+import matplotlib.pyplot as plt
+from scipy.stats import pearsonr
+import data_source
 
 numpy.set_printoptions(threshold=numpy.nan)
 numpy.set_printoptions(precision=3)
@@ -23,7 +26,8 @@ class MMASFS :
     data_classes            = []
     data_classes_instances  = {}
     data_class              = 0
-    solutions               = []
+    results                 = []
+    best_result             = []
    
     def __init__(self, iterations, alpha, beta, phi, max_pheromone, min_pheromone, q) :
 
@@ -50,42 +54,34 @@ class MMASFS :
 
 
     def loadData(self):
-        #Load and process data
-        f = pandas.read_csv('datasets/wine.data.txt', sep=',', header=None)
-        data = f.values
-        self.data_classes = data[:,0] #all first column
-        self.data_instances = data[:,1:] #the rest of the columns
+        self.data_classes, self.data_instances, self.data_classes_instances = data_source.getShuttleData('train')
+        self.result_filename = 'shuttle_bmmasfs.txt'
+        self.FEATURE_COUNT = len(self.data_instances[0])
+        self.ANT_COUNT = self.FEATURE_COUNT
         
-        for c in numpy.unique(self.data_classes):
-            class_instance = data[numpy.where(data[:,0] == c)]
-            self.data_classes_instances[c] = class_instance[:,1:]         
+    def evaluateSolution(self, solution, is_best_solution):
         
-
-        self.FEATURE_COUNT = self.data_instances.shape[1]
+        test_data_classes,test_data_instances, test_data_classes_instances  = data_source.getShuttleData('test')
         
-    def evaluateSolution(self):
-        eval_data_instances  = self.data_instances[:, self.best_solution[0][0]]
-         
-        f = pandas.read_csv('datasets/wine.text.txt', sep=',', header=None)
-        data = f.values
-        test_data_classes = data[:,0] #all first column
-        test_data_instances = data[:,1:] #the rest of the columns
-                
-        #knn = KNeighborsClassifier()
-        #knn.fit(eval_data_instances,self.data_classes)
-        #test_data_pred_classes = knn.predict(test_data_instances[:, self.best_solution[0][0]])
+        eval_data_instances  = self.data_instances[:, solution[0][0]]
+ 
+                         
+        knn = KNeighborsClassifier()
+        knn.fit(eval_data_instances,self.data_classes)
+        test_data_pred_classes = knn.predict(test_data_instances[:, solution[0][0]])
         
-        clf = svm.LinearSVC(random_state=0)
-        clf.fit(eval_data_instances,self.data_classes)
-        test_data_pred_classes = clf.predict(test_data_instances[:, self.best_solution[0][0]])
+#        clf = svm.LinearSVC(random_state=0)
+#        clf.fit(eval_data_instances,self.data_classes)
+#        test_data_pred_classes = clf.predict(test_data_instances[:, solution[0][0]])
         
         target_names = []
 
-        for c in list(a.data_classes_instances.keys()) :
+        for c in test_data_classes_instances.keys() :
             target_names.append('Class ' + str(int(c)))
-            
-        return self.report2dict(classification_report(test_data_classes, test_data_pred_classes, target_names=target_names))
 
+        report = classification_report(test_data_classes, test_data_pred_classes, target_names=target_names)
+        
+        return self.addToResult(report, solution, is_best_solution)
 
     def initAnts(self):
         feature_set = random.sample(range(self.FEATURE_COUNT), self.FEATURE_COUNT)
@@ -120,44 +116,58 @@ class MMASFS :
     def getHeuristicValue(self,state_from, node_from, state_to, node_to) :
 
         total_f_score = 0
+        node_to_f_score = 0
+        #print('computing heuristic value for sub-paths',node_from, state_from, node_to, state_to)
 
         for f in range(0, self.FEATURE_COUNT):
-            total_f_score += self.getFScore(f)
+            f_score = self.getFScore(f)
+            total_f_score += f_score
+            if f == node_to :
+                node_to_f_score = f_score
+
+        #pearson = pearsonr(self.data_instances[:,node_from], self.data_instances[:,node_to])
+
 
         if (state_from == 0 and state_to == 0) or (state_from == 1 and state_to == 0) :
             return (state_from / self.FEATURE_COUNT) * total_f_score
+            #return pearson[0]
         elif (state_from == 0 and state_to == 1) or (state_from == 1 and state_to == 1) :
-            return self.getFScore(node_to)
+            return node_to_f_score
+            #return 1 - pearson[0]
 
     def getFScore(self, feature) :
-
-        mean_all_classes = numpy.mean(self.data_instances, axis = 0)
-        n = d = nps = 0
-
-        for k in self.data_classes_instances.keys():
-            mean_per_class = numpy.mean(self.data_classes_instances[k], axis = 0)
-            n += numpy.power((mean_per_class[feature] -  mean_all_classes[feature]),2)
-
-            #data has complete features per instance
-            feature_instance_in_k = len(self.data_classes_instances[k])
-
-            for l in self.data_classes_instances[k] :
-                nps += numpy.power((l[feature] - mean_per_class[feature]), 2)
-            
-            d += (1 / (feature_instance_in_k - 1 ) ) * nps
-
         
+        n = d = 0
+        
+        feature_mean_all_classes = numpy.mean(a.data_instances[:,feature])
+        
+        for k in self.data_classes_instances.keys():
+            class_k_data = self.data_classes_instances[k]
+            #class_k_data_n_samples = len(class_k_data)
+            feature_k_in_class_k = class_k_data[:,feature]
+            feature_k_in_class_k_samples = len(feature_k_in_class_k)
+            feature_mean_in_class_k = numpy.mean(feature_k_in_class_k)
+            n += numpy.square(feature_mean_all_classes - feature_mean_in_class_k)
+        
+            dd = 0
+            
+            for j in range(0,feature_k_in_class_k_samples):
+                dd += numpy.square(feature_k_in_class_k[j] - feature_mean_in_class_k)
+            
+            d += (1 / (feature_k_in_class_k_samples - 1)) * dd
+        
+        print('f-score', n, d, n/d)              
         return n/d
     
     def getSolutionQuality(self, classes, new_instances) :
     
-        #knn = KNeighborsClassifier()
-        #knn.fit(new_instances, classes)
-        #return knn.score(new_instances,classes)
+        knn = KNeighborsClassifier()
+        knn.fit(new_instances, classes)
+        return knn.score(new_instances,classes)
     
-        clf = svm.LinearSVC(random_state=0)
-        clf.fit(new_instances,classes)
-        return clf.score(new_instances,classes)
+#        clf = svm.LinearSVC(random_state=0)
+#        clf.fit(new_instances,classes)
+#        return clf.score(new_instances,classes)
     
     def getIterationBestSolution(self) :
         score_vector = []
@@ -167,20 +177,23 @@ class MMASFS :
         for a in range(0, self.ANT_COUNT) :
             new_features        = numpy.nonzero(self.ant_steps[a][1])
             new_data_instances  = self.data_instances[:, new_features[0]]
-            score_vector.append(self.getSolutionQuality(self.data_classes, new_data_instances))
+            score_quality       = self.getSolutionQuality(self.data_classes, new_data_instances)
+            self.ant_steps[a][2] = score_quality
+            score_vector.append(score_quality)
             reduction_vector.append((self.FEATURE_COUNT - len(new_features[0])) / self.FEATURE_COUNT)
     
         ants_max_score_indices = numpy.where(score_vector == numpy.max(score_vector))
         ants_max_reduction = numpy.take(reduction_vector, ants_max_score_indices[0])
         ants_max_reduction_indices = numpy.where(ants_max_reduction == numpy.max(ants_max_reduction))
-                    
+        
+        print('----')
         for i in numpy.take(ants_max_score_indices[0],ants_max_reduction_indices[0]) :
             features_selected = numpy.take(self.ant_steps[i][0],numpy.nonzero(self.ant_steps[i][1]))
             features_selected_count = len(features_selected[0])
             features_selected_score = score_vector[i]
-            
-            if(not numpy.array_equal(features_selected,current_best_solution[0]) and (features_selected_score > current_best_solution[1] or features_selected_count < current_best_solution[2])) :
-                print(features_selected)
+            print(features_selected, features_selected_count, features_selected_score)
+            if(not numpy.array_equal(features_selected,current_best_solution[0]) and 
+               (features_selected_score > current_best_solution[1] or features_selected_count < current_best_solution[2])) :
                 current_best_solution[0] = features_selected
                 current_best_solution[1] = features_selected_score
                 current_best_solution[2] = features_selected_count
@@ -188,7 +201,7 @@ class MMASFS :
                 current_best_solution[3] = self.ant_steps[i][0]
                 #state
                 current_best_solution[4] = self.ant_steps[i][1]
-        
+        print('----')
             
         return current_best_solution
 
@@ -202,9 +215,10 @@ class MMASFS :
 
             #if next_feature_state == 1 :
             current_deposit = self.pheromone_matrix[current_feature,next_feature][current_feature_state,next_feature_state]
-            solution_quality = 1.0 if ( (1 - solution[1]) * 100 == 0 ) else self.Q / ( (1 - solution[1]) * 100 )
+            error_rate = (1 - solution[1]) * 100
+            solution_quality = 1.0 if error_rate == 0 else self.Q / error_rate
             
-            deposit = (1 - self.PHI) * current_deposit + solution_quality
+            deposit = (1 - self.PHI) * current_deposit + solution_quality + (1 - (len(solution[0]) / self.FEATURE_COUNT))
             if deposit <= self.MIN_PHEROMONE : deposit = self.MIN_PHEROMONE
             elif deposit >= self.MAX_PHEROMONE: deposit = self.MAX_PHEROMONE
             
@@ -226,7 +240,9 @@ class MMASFS :
         next_steps_scores_1_max = max(next_steps_scores_1,key=next_steps_scores_1.get)
         
         if next_steps_scores_0[next_steps_scores_0_max] == next_steps_scores_1[next_steps_scores_1_max]:
-            step = next_steps_scores_0_max, numpy.random.randint(2)
+            #step = next_steps_scores_0_max, numpy.random.randint(2)
+            step = next_steps_scores_0_max, 0
+            print('equal!')
         elif next_steps_scores_0[next_steps_scores_0_max] > next_steps_scores_1[next_steps_scores_1_max]:
             step = next_steps_scores_0_max, 0
         else:
@@ -248,8 +264,11 @@ class MMASFS :
             step_0 += self.getNextStepProbabilityPheromoneHeuristicWeights(current_step, step, current_step_state, 0)
             step_1 += self.getNextStepProbabilityPheromoneHeuristicWeights(current_step, step, current_step_state, 1)
         
+        
         d = (step_0 + step_1)
         prob = n / (step_0 + step_1) if (n != 0 and d!= 0) else 0
+              
+        
         
         return prob
     
@@ -278,42 +297,73 @@ class MMASFS :
             
 
             local_best = self.getIterationBestSolution()
-            self.solutions.append(local_best[0])
             self.evaporatePheromones()
-            self.addPheromone(local_best) 
+            self.addPheromone(local_best)
+            
+            print('local best solution', local_best[0], local_best[1], local_best[2])
             
             #if local_best[1] > self.best_solution[1] and local_best[2] <= self.best_solution[2] :
-            if local_best[1] > self.best_solution[1] :
+            #if local_best[1] > self.best_solution[1] :
+            is_best_solution = 0
+            if (local_best[1] > self.best_solution[1]) or (not numpy.array_equal(local_best[0], self.best_solution[0]) and  local_best[1] == self.best_solution[1]) :
                 self.best_solution = local_best
-                
-            print('local best solution', local_best[0], local_best[1], local_best[2])
+                is_best_solution = 1
+             
+            self.evaluateSolution(local_best, is_best_solution)    
             print('best solution', self.best_solution[0], self.best_solution[1], self.best_solution[2])
             print('------------------ Iteration ', i, '------------------')
         
         
-        self.evaluateSolution()
+        
+        self.generateReport()
         
         
-    def report2dict(self,cr):
+    def addToResult(self,cr, solution, is_best_solution):
         
-        print(cr)
         # Parse rows
         tmp = []
+        
         for row in cr.split("\n"):
             parsed_row = [x for x in row.split("  ") if len(x) > 0]
             if len(parsed_row) > 0:
                 tmp.append(parsed_row)
+        
+        result = [solution[1], tmp[-1][1], tmp[-1][2], tmp[-1][3], solution[2], numpy.array_str(solution[0])]
+        self.results.append(result)
+        if(is_best_solution): self.best_result = result
+          
+    def generateReport(self) :
+        numpy.savetxt(self.result_filename, self.results, fmt='%5s', delimiter=',', newline='\n')
+
+
                 
         
         
 
-average = 0.0
-test_run = 1
-for i in range (0,test_run):
-    print('------------------ Evaluation ', i, '------------------')
-    a = MMASFS(50, 1.0, 0.5, .049, 6.0, 0.1, 1.0)
-    a.run()
-    average += a.best_solution[1]
-print('average accuracy', average/test_run)
+accuracy_results = []
+precision_results = []
+recall_results = []
+fr_results = []
+individual_run = 20
+iteration = 50
 
-#print('BEST SOLUTION ', a.best_solution[0], a.best_solution[2])
+for i in range (0,individual_run):
+    print('########################### Evaluation ', i, '###########################')
+    a = MMASFS(iteration, 1.0, 0.5, .049, 6.0, 0.1, 1.0)
+    a.run()
+    print('global best solution ', a.best_solution)
+    accuracy_results.append(a.best_result[0])
+    precision_results.append(a.best_result[1])
+    recall_results.append(a.best_result[2])
+    fr_results.append(a.best_result[3])
+
+accuracy_results = numpy.array(accuracy_results, dtype=float)
+precision_results = numpy.array(precision_results, dtype=float) 
+recall_results = numpy.array(recall_results, dtype=float)  
+fr_results = numpy.array(fr_results, dtype=float)  
+   
+print('average accuracy', numpy.mean(accuracy_results))
+print('average precision', numpy.mean(precision_results))
+print('average recall', numpy.mean(recall_results))
+print('average fr', numpy.mean(fr_results))
+
